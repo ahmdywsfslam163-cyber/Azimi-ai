@@ -1,0 +1,1936 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>AR Gesture Studio | Ahmed Sallam</title>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Space+Grotesk:wght@300;400;500;600;700&display=swap');
+
+  :root {
+    --primary: #7c3aed;
+    --primary-light: #a855f7;
+    --secondary: #06b6d4;
+    --accent: #f59e0b;
+    --danger: #ef4444;
+    --success: #10b981;
+    --bg-dark: #0a0a0f;
+    --bg-card: rgba(255,255,255,0.05);
+    --glass: rgba(255,255,255,0.08);
+    --glass-border: rgba(255,255,255,0.12);
+    --text-primary: #f8fafc;
+    --text-secondary: rgba(248,250,252,0.6);
+    --glow-purple: 0 0 30px rgba(124,58,237,0.5);
+    --glow-cyan: 0 0 30px rgba(6,182,212,0.5);
+    --glow-amber: 0 0 30px rgba(245,158,11,0.5);
+    --radius: 16px;
+    --radius-sm: 10px;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+  html, body {
+    width: 100%; height: 100%;
+    overflow: hidden;
+    background: var(--bg-dark);
+    font-family: 'Space Grotesk', 'Inter', sans-serif;
+    color: var(--text-primary);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ══════════════════════════════ LOADING SCREEN ══════════════════════════════ */
+  #loading-screen {
+    position: fixed; inset: 0; z-index: 9999;
+    background: var(--bg-dark);
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 24px;
+    transition: opacity 0.8s ease, visibility 0.8s ease;
+  }
+  #loading-screen.hidden { opacity: 0; visibility: hidden; }
+
+  .loading-logo {
+    width: 100px; height: 100px;
+    position: relative;
+  }
+  .loading-logo-ring {
+    position: absolute; inset: 0;
+    border-radius: 50%;
+    border: 3px solid transparent;
+    animation: spin-ring 1.5s linear infinite;
+  }
+  .loading-logo-ring:nth-child(1) {
+    border-top-color: var(--primary);
+    border-right-color: var(--primary-light);
+    animation-duration: 1.2s;
+  }
+  .loading-logo-ring:nth-child(2) {
+    inset: 10px;
+    border-bottom-color: var(--secondary);
+    border-left-color: var(--accent);
+    animation-duration: 1.8s;
+    animation-direction: reverse;
+  }
+  .loading-logo-ring:nth-child(3) {
+    inset: 20px;
+    border-top-color: var(--accent);
+    animation-duration: 2.4s;
+  }
+  .loading-logo-inner {
+    position: absolute; inset: 30px;
+    background: linear-gradient(135deg, var(--primary), var(--secondary));
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px;
+  }
+  @keyframes spin-ring { to { transform: rotate(360deg); } }
+
+  .loading-title {
+    font-size: 28px; font-weight: 800;
+    background: linear-gradient(135deg, var(--primary-light), var(--secondary), var(--accent));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    letter-spacing: -0.5px;
+  }
+  .loading-subtitle {
+    font-size: 13px; color: var(--text-secondary);
+    letter-spacing: 2px; text-transform: uppercase;
+  }
+  .loading-bar-wrap {
+    width: 240px; height: 4px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 99px; overflow: hidden;
+  }
+  .loading-bar {
+    height: 100%;
+    background: linear-gradient(90deg, var(--primary), var(--secondary));
+    border-radius: 99px;
+    animation: load-progress 2.5s ease forwards;
+    transform-origin: left;
+  }
+  @keyframes load-progress { from { width: 0; } to { width: 100%; } }
+  .loading-status {
+    font-size: 12px; color: var(--text-secondary);
+    min-height: 18px; text-align: center;
+  }
+
+  /* ══════════════════════════════ MAIN APP ══════════════════════════════ */
+  #app {
+    position: fixed; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  /* ══════════════════════════════ VIDEO + CANVAS ══════════════════════════════ */
+  #video-container {
+    position: absolute; inset: 0;
+    overflow: hidden;
+    background: #000;
+  }
+  #video {
+    position: absolute;
+    width: 100%; height: 100%;
+    object-fit: cover;
+    transform: scaleX(-1);
+  }
+  #ar-canvas {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
+    z-index: 2;
+  }
+  #bg-canvas {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    z-index: 1;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.5s ease;
+  }
+  #bg-canvas.active { opacity: 1; }
+
+  /* ══════════════════════════════ OVERLAY UI ══════════════════════════════ */
+  #ui-overlay {
+    position: absolute; inset: 0; z-index: 10;
+    pointer-events: none;
+    display: flex; flex-direction: column;
+    justify-content: space-between;
+    padding: 16px;
+  }
+
+  /* Top bar */
+  .top-bar {
+    display: flex; align-items: center; justify-content: space-between;
+    pointer-events: all;
+  }
+  .app-brand {
+    display: flex; align-items: center; gap: 10px;
+  }
+  .brand-dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--success);
+    box-shadow: 0 0 10px var(--success);
+    animation: pulse-dot 2s ease infinite;
+  }
+  @keyframes pulse-dot {
+    0%,100% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.4); opacity: 0.7; }
+  }
+  .brand-name {
+    font-size: 16px; font-weight: 700;
+    background: linear-gradient(90deg, #fff, var(--primary-light));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    letter-spacing: -0.3px;
+  }
+
+  .top-stats {
+    display: flex; gap: 8px; align-items: center;
+  }
+  .stat-badge {
+    background: var(--glass);
+    border: 1px solid var(--glass-border);
+    backdrop-filter: blur(12px);
+    border-radius: 99px;
+    padding: 5px 12px;
+    font-size: 12px; font-weight: 600;
+    display: flex; align-items: center; gap: 5px;
+    color: var(--text-secondary);
+  }
+  .stat-badge .val { color: var(--text-primary); }
+  #fps-val { color: var(--success); }
+  #fps-val.warn { color: var(--accent); }
+  #fps-val.bad { color: var(--danger); }
+
+  /* Gesture display */
+  #gesture-display {
+    position: absolute;
+    top: 70px; left: 50%; transform: translateX(-50%);
+    pointer-events: none;
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+  }
+  .gesture-badge {
+    background: linear-gradient(135deg, rgba(124,58,237,0.85), rgba(6,182,212,0.85));
+    border: 1px solid rgba(255,255,255,0.2);
+    backdrop-filter: blur(16px);
+    border-radius: 99px;
+    padding: 8px 20px;
+    font-size: 14px; font-weight: 700;
+    letter-spacing: 0.5px;
+    box-shadow: var(--glow-purple);
+    display: flex; align-items: center; gap: 8px;
+    animation: badge-pop 0.3s cubic-bezier(0.34,1.56,0.64,1);
+    white-space: nowrap;
+  }
+  @keyframes badge-pop {
+    from { transform: scale(0.5); opacity: 0; }
+    to { transform: scale(1); opacity: 1; }
+  }
+  .gesture-badge .gest-icon { font-size: 20px; }
+  .gesture-badge.hidden { display: none; }
+
+  /* Bottom controls */
+  .bottom-bar {
+    display: flex; flex-direction: column; gap: 12px;
+    pointer-events: all;
+  }
+
+  .controls-row {
+    display: flex; align-items: center; justify-content: center; gap: 12px;
+  }
+
+  .btn-circle {
+    width: 52px; height: 52px; border-radius: 50%;
+    border: none; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px;
+    transition: all 0.2s cubic-bezier(0.34,1.56,0.64,1);
+    position: relative; overflow: hidden;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .btn-circle::before {
+    content: '';
+    position: absolute; inset: 0; border-radius: 50%;
+    background: radial-gradient(circle at 35% 35%, rgba(255,255,255,0.2), transparent);
+  }
+  .btn-circle:active { transform: scale(0.88); }
+  .btn-circle:hover { transform: scale(1.1); }
+
+  .btn-glass {
+    background: var(--glass);
+    border: 1px solid var(--glass-border);
+    backdrop-filter: blur(16px);
+    color: var(--text-primary);
+  }
+  .btn-glass:hover { background: rgba(255,255,255,0.14); box-shadow: var(--glow-purple); }
+
+  .btn-capture {
+    width: 72px !important; height: 72px !important;
+    font-size: 26px;
+    background: linear-gradient(135deg, var(--primary), var(--primary-light));
+    border: 3px solid rgba(255,255,255,0.25);
+    box-shadow: var(--glow-purple), 0 8px 32px rgba(0,0,0,0.4);
+    color: white;
+  }
+  .btn-capture:hover { box-shadow: 0 0 50px rgba(124,58,237,0.8), 0 8px 32px rgba(0,0,0,0.4); }
+  .btn-capture.flash {
+    animation: capture-flash 0.4s ease;
+  }
+  @keyframes capture-flash {
+    0% { box-shadow: 0 0 0 0 rgba(255,255,255,0.9); }
+    100% { box-shadow: 0 0 60px 30px rgba(255,255,255,0); }
+  }
+
+  .btn-danger { background: linear-gradient(135deg, #ef4444, #dc2626); color: white; }
+
+  /* Effects toolbar */
+  .effects-row {
+    display: flex; gap: 8px; justify-content: center;
+    overflow-x: auto; padding-bottom: 2px;
+    scrollbar-width: none;
+  }
+  .effects-row::-webkit-scrollbar { display: none; }
+  .effect-btn {
+    flex-shrink: 0;
+    padding: 6px 14px;
+    border-radius: 99px;
+    border: 1px solid var(--glass-border);
+    background: var(--glass);
+    backdrop-filter: blur(12px);
+    color: var(--text-secondary);
+    font-size: 12px; font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex; align-items: center; gap: 5px;
+    white-space: nowrap;
+  }
+  .effect-btn:hover, .effect-btn.active {
+    background: linear-gradient(135deg, rgba(124,58,237,0.5), rgba(6,182,212,0.5));
+    border-color: var(--primary-light);
+    color: var(--text-primary);
+    box-shadow: var(--glow-purple);
+    transform: translateY(-2px);
+  }
+  .effect-btn span:first-child { font-size: 16px; }
+
+  /* Side panel */
+  #side-panel {
+    position: absolute;
+    right: 16px; top: 50%; transform: translateY(-50%);
+    display: flex; flex-direction: column; gap: 10px;
+    z-index: 10;
+    pointer-events: all;
+  }
+  .side-btn {
+    width: 44px; height: 44px;
+    border-radius: 12px;
+    border: 1px solid var(--glass-border);
+    background: var(--glass);
+    backdrop-filter: blur(16px);
+    color: var(--text-primary);
+    font-size: 18px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.2s ease;
+  }
+  .side-btn:hover { background: rgba(255,255,255,0.14); transform: scale(1.08); }
+  .side-btn:active { transform: scale(0.92); }
+  .side-btn.active {
+    background: linear-gradient(135deg, var(--primary), var(--primary-light));
+    border-color: transparent;
+    box-shadow: var(--glow-purple);
+  }
+
+  /* Sticker panel */
+  #sticker-panel {
+    position: absolute;
+    right: 72px; top: 50%; transform: translateY(-50%);
+    background: var(--glass);
+    border: 1px solid var(--glass-border);
+    backdrop-filter: blur(20px);
+    border-radius: var(--radius);
+    padding: 12px;
+    z-index: 10;
+    width: 200px;
+    display: none; flex-direction: column; gap: 8px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  }
+  #sticker-panel.open { display: flex; }
+  .sticker-cat-title {
+    font-size: 11px; font-weight: 700; color: var(--text-secondary);
+    text-transform: uppercase; letter-spacing: 1px;
+    padding: 4px 0;
+    border-bottom: 1px solid var(--glass-border);
+  }
+  .sticker-grid {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px;
+  }
+  .sticker-item {
+    width: 100%; aspect-ratio: 1;
+    border-radius: 10px;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid transparent;
+    cursor: pointer; font-size: 22px;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.2s ease;
+  }
+  .sticker-item:hover {
+    background: rgba(124,58,237,0.3);
+    border-color: var(--primary);
+    transform: scale(1.15);
+  }
+  .sticker-item.selected {
+    background: rgba(124,58,237,0.5);
+    border-color: var(--primary-light);
+    box-shadow: var(--glow-purple);
+  }
+
+  /* Toast notifications */
+  #toast-container {
+    position: absolute; top: 80px; left: 50%;
+    transform: translateX(-50%);
+    z-index: 100; pointer-events: none;
+    display: flex; flex-direction: column; gap: 8px;
+    align-items: center;
+  }
+  .toast {
+    background: var(--glass);
+    border: 1px solid var(--glass-border);
+    backdrop-filter: blur(20px);
+    border-radius: 99px;
+    padding: 8px 20px;
+    font-size: 13px; font-weight: 600;
+    animation: toast-in 0.3s cubic-bezier(0.34,1.56,0.64,1);
+    white-space: nowrap;
+  }
+  .toast.success { border-color: var(--success); color: var(--success); }
+  .toast.error { border-color: var(--danger); color: var(--danger); }
+  @keyframes toast-in { from { opacity:0; transform:translateY(-10px) scale(0.9); } to { opacity:1; transform:translateY(0) scale(1); } }
+
+  /* Face/hand detection indicators */
+  .detect-indicators {
+    position: absolute; bottom: 160px; left: 16px;
+    display: flex; flex-direction: column; gap: 6px;
+    pointer-events: none; z-index: 10;
+  }
+  .detect-pill {
+    background: var(--glass);
+    border: 1px solid var(--glass-border);
+    backdrop-filter: blur(12px);
+    border-radius: 99px;
+    padding: 4px 10px;
+    font-size: 11px; font-weight: 600;
+    display: flex; align-items: center; gap: 6px;
+    color: var(--text-secondary);
+    transition: all 0.3s ease;
+  }
+  .detect-pill.active { color: var(--success); border-color: var(--success); }
+  .detect-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: currentColor;
+  }
+  .detect-pill.active .detect-dot { animation: pulse-dot 1s ease infinite; }
+
+  /* Flash overlay for capture */
+  #flash-overlay {
+    position: absolute; inset: 0; z-index: 50;
+    background: white; opacity: 0; pointer-events: none;
+    transition: opacity 0.15s ease;
+  }
+  #flash-overlay.flash { animation: flash-anim 0.5s ease; }
+  @keyframes flash-anim {
+    0% { opacity: 0; } 20% { opacity: 0.9; } 100% { opacity: 0; }
+  }
+
+  /* Permission screen */
+  #permission-screen {
+    position: fixed; inset: 0; z-index: 8000;
+    background: var(--bg-dark);
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 24px; padding: 32px; text-align: center;
+  }
+  #permission-screen.hidden { display: none; }
+  .permission-icon { font-size: 64px; margin-bottom: 8px; }
+  .permission-title { font-size: 24px; font-weight: 800; }
+  .permission-desc { font-size: 14px; color: var(--text-secondary); max-width: 280px; line-height: 1.6; }
+  .permission-btn {
+    padding: 14px 36px;
+    border-radius: 99px;
+    border: none; cursor: pointer;
+    background: linear-gradient(135deg, var(--primary), var(--primary-light));
+    color: white; font-size: 16px; font-weight: 700;
+    box-shadow: var(--glow-purple);
+    transition: all 0.2s ease;
+  }
+  .permission-btn:hover { transform: scale(1.05); box-shadow: 0 0 40px rgba(124,58,237,0.7); }
+
+  /* Responsive */
+  @media (max-width: 480px) {
+    .top-stats { gap: 5px; }
+    .stat-badge { padding: 4px 8px; font-size: 11px; }
+    #side-panel { right: 8px; }
+    .btn-capture { width: 64px !important; height: 64px !important; }
+    .detect-indicators { bottom: 150px; }
+  }
+
+  /* Scrollbars */
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--glass-border); border-radius: 99px; }
+
+  /* Particle canvas */
+  #particle-canvas {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    pointer-events: none; z-index: 3;
+  }
+
+  /* Background themes */
+  body.bg-space { --bg-dark: #000010; }
+  body.bg-forest { --bg-dark: #001a00; }
+  body.bg-fire-bg { --bg-dark: #1a0000; }
+  body.bg-cyber { --bg-dark: #00001a; }
+  body.bg-sunset { --bg-dark: #1a0510; }
+
+  /* Info overlay */
+  #info-panel {
+    position: absolute;
+    left: 16px; top: 50%; transform: translateY(-50%);
+    background: var(--glass);
+    border: 1px solid var(--glass-border);
+    backdrop-filter: blur(20px);
+    border-radius: var(--radius);
+    padding: 14px;
+    z-index: 10;
+    width: 180px;
+    display: none; flex-direction: column; gap: 8px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    pointer-events: all;
+  }
+  #info-panel.open { display: flex; }
+  .info-title {
+    font-size: 12px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 1px;
+    color: var(--primary-light);
+    border-bottom: 1px solid var(--glass-border);
+    padding-bottom: 6px;
+  }
+  .info-row {
+    display: flex; justify-content: space-between;
+    font-size: 11px;
+  }
+  .info-label { color: var(--text-secondary); }
+  .info-value { color: var(--text-primary); font-weight: 600; }
+  .info-gesture-list {
+    display: flex; flex-direction: column; gap: 4px;
+    margin-top: 4px;
+  }
+  .info-gesture-item {
+    font-size: 11px; color: var(--text-secondary);
+    display: flex; align-items: center; gap: 5px;
+  }
+  .info-gesture-item span:first-child { font-size: 14px; }
+</style>
+</head>
+<body>
+
+<!-- Loading Screen -->
+<div id="loading-screen">
+  <div class="loading-logo">
+    <div class="loading-logo-ring"></div>
+    <div class="loading-logo-ring"></div>
+    <div class="loading-logo-ring"></div>
+    <div class="loading-logo-inner">✨</div>
+  </div>
+  <div class="loading-title">AR Gesture Studio</div>
+  <div class="loading-subtitle">by Ahmed Sallam</div>
+  <div class="loading-bar-wrap"><div class="loading-bar"></div></div>
+  <div class="loading-status" id="loading-status">جاري تحميل النماذج...</div>
+</div>
+
+<!-- Permission Screen -->
+<div id="permission-screen" class="hidden">
+  <div class="permission-icon">📸</div>
+  <div class="permission-title">تفعيل الكاميرا</div>
+  <div class="permission-desc">يحتاج التطبيق إلى الوصول للكاميرا لتفعيل تتبع اليد والوجه والمؤثرات البصرية</div>
+  <button class="permission-btn" onclick="requestCamera()">🎬 تفعيل الكاميرا</button>
+</div>
+
+<!-- Main App -->
+<div id="app">
+  <div id="video-container">
+    <video id="video" playsinline autoplay muted></video>
+    <canvas id="bg-canvas"></canvas>
+    <canvas id="ar-canvas"></canvas>
+    <canvas id="particle-canvas"></canvas>
+    <div id="flash-overlay"></div>
+  </div>
+
+  <!-- UI Overlay -->
+  <div id="ui-overlay">
+    <!-- Top Bar -->
+    <div class="top-bar">
+      <div class="app-brand">
+        <div class="brand-dot"></div>
+        <span class="brand-name">AR Studio</span>
+      </div>
+      <div class="top-stats">
+        <div class="stat-badge">⚡ <span class="val" id="fps-val">--</span> FPS</div>
+        <div class="stat-badge">👁️ <span class="val" id="hand-count">0</span></div>
+        <div class="stat-badge">😊 <span class="val" id="face-status">—</span></div>
+      </div>
+    </div>
+
+    <!-- Gesture Display -->
+    <div id="gesture-display">
+      <div class="gesture-badge hidden" id="gesture-badge">
+        <span class="gest-icon" id="gesture-icon">👋</span>
+        <span id="gesture-name">إيماءة</span>
+      </div>
+    </div>
+
+    <!-- Effects Row -->
+    <div></div><!-- spacer -->
+
+    <!-- Bottom Bar -->
+    <div class="bottom-bar">
+      <div class="effects-row" id="effects-row">
+        <button class="effect-btn active" data-effect="auto" onclick="setEffect('auto',this)">
+          <span>🤖</span><span>تلقائي</span>
+        </button>
+        <button class="effect-btn" data-effect="fire" onclick="setEffect('fire',this)">
+          <span>🔥</span><span>نار</span>
+        </button>
+        <button class="effect-btn" data-effect="lightning" onclick="setEffect('lightning',this)">
+          <span>⚡</span><span>برق</span>
+        </button>
+        <button class="effect-btn" data-effect="hearts" onclick="setEffect('hearts',this)">
+          <span>❤️</span><span>قلوب</span>
+        </button>
+        <button class="effect-btn" data-effect="stars" onclick="setEffect('stars',this)">
+          <span>⭐</span><span>نجوم</span>
+        </button>
+        <button class="effect-btn" data-effect="explosion" onclick="setEffect('explosion',this)">
+          <span>💥</span><span>انفجار</span>
+        </button>
+        <button class="effect-btn" data-effect="energy" onclick="setEffect('energy',this)">
+          <span>✨</span><span>طاقة</span>
+        </button>
+        <button class="effect-btn" data-effect="matrix" onclick="setEffect('matrix',this)">
+          <span>💊</span><span>ماتريكس</span>
+        </button>
+        <button class="effect-btn" data-effect="snow" onclick="setEffect('snow',this)">
+          <span>❄️</span><span>ثلج</span>
+        </button>
+        <button class="effect-btn" data-effect="rainbow" onclick="setEffect('rainbow',this)">
+          <span>🌈</span><span>قوس قزح</span>
+        </button>
+      </div>
+      <div class="controls-row">
+        <button class="btn-circle btn-glass" onclick="toggleInfo()" id="btn-info" title="معلومات">ℹ️</button>
+        <button class="btn-circle btn-glass" onclick="toggleStickers()" id="btn-stickers" title="ملصقات">🎭</button>
+        <button class="btn-circle btn-capture" onclick="capturePhoto()" id="btn-capture" title="تصوير">📸</button>
+        <button class="btn-circle btn-glass" onclick="switchCamera()" id="btn-switch" title="تبديل الكاميرا">🔄</button>
+        <button class="btn-circle btn-glass" onclick="shareLastCapture()" id="btn-share" title="مشاركة">📤</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Side Panel - Stickers -->
+  <div id="sticker-panel">
+    <div class="sticker-cat-title">🦁 أسود وحيوانات</div>
+    <div class="sticker-grid" id="stickers-animals"></div>
+    <div class="sticker-cat-title">😄 مرح</div>
+    <div class="sticker-grid" id="stickers-funny"></div>
+    <div class="sticker-cat-title">❤️ حب</div>
+    <div class="sticker-grid" id="stickers-love"></div>
+    <div class="sticker-cat-title">⚡ قوة</div>
+    <div class="sticker-grid" id="stickers-power"></div>
+  </div>
+
+  <!-- Side Button Panel -->
+  <div id="side-panel">
+    <button class="side-btn" onclick="toggleStickers()" id="side-sticker-btn" title="ملصقات">🎭</button>
+    <button class="side-btn" onclick="cycleBg()" title="خلفية">🖼️</button>
+    <button class="side-btn" onclick="toggleMirror()" id="side-mirror-btn" title="مرآة">🪞</button>
+    <button class="side-btn" onclick="toggleGrid()" id="side-grid-btn" title="شبكة">⊞</button>
+  </div>
+
+  <!-- Info Panel -->
+  <div id="info-panel">
+    <div class="info-title">🎮 الإيماءات</div>
+    <div class="info-gesture-list">
+      <div class="info-gesture-item"><span>☝️</span><span>أسد 3D</span></div>
+      <div class="info-gesture-item"><span>✌️</span><span>نار حول الجسم</span></div>
+      <div class="info-gesture-item"><span>✊</span><span>انفجار</span></div>
+      <div class="info-gesture-item"><span>🖐️</span><span>تغيير خلفية</span></div>
+      <div class="info-gesture-item"><span>🤟</span><span>قلوب</span></div>
+      <div class="info-gesture-item"><span>🤘</span><span>برق</span></div>
+      <div class="info-gesture-item"><span>👏</span><span>طاقة</span></div>
+    </div>
+    <div class="info-title" style="margin-top:6px">😊 وجه</div>
+    <div class="info-gesture-list">
+      <div class="info-gesture-item"><span>😄</span><span>ملصقات سعيدة</span></div>
+      <div class="info-gesture-item"><span>😉</span><span>فلتر عشوائي</span></div>
+      <div class="info-gesture-item"><span>😮</span><span>تأثير مضحك</span></div>
+    </div>
+    <div class="info-title" style="margin-top:6px">📊 أداء</div>
+    <div class="info-row">
+      <span class="info-label">FPS مستهدف</span>
+      <span class="info-value">60</span>
+    </div>
+    <div class="info-row">
+      <span class="info-label">دقة التتبع</span>
+      <span class="info-value" id="info-hands-conf">—</span>
+    </div>
+  </div>
+
+  <!-- Detection Indicators -->
+  <div class="detect-indicators">
+    <div class="detect-pill" id="pill-hand">
+      <div class="detect-dot"></div>
+      <span>يد</span>
+    </div>
+    <div class="detect-pill" id="pill-face">
+      <div class="detect-dot"></div>
+      <span>وجه</span>
+    </div>
+  </div>
+
+  <!-- Toast Container -->
+  <div id="toast-container"></div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════
+//                    GLOBAL STATE
+// ═══════════════════════════════════════════════════════
+const state = {
+  // Camera
+  stream: null,
+  facingMode: 'user',
+  isMirrored: true,
+  // Models
+  handsModel: null,
+  faceMeshModel: null,
+  camera: null,
+  // Tracking results
+  handResults: null,
+  faceResults: null,
+  // Gestures
+  currentGesture: null,
+  lastGestureTime: 0,
+  gestureCooldown: 800,
+  // Effects
+  activeEffect: 'auto',
+  manualEffect: null,
+  // Stickers
+  activeSticker: null,
+  stickerPos: { x: 0.5, y: 0.5 },
+  // Backgrounds
+  bgIndex: 0,
+  showGrid: false,
+  // Particles
+  particles: [],
+  stickers3D: [],
+  floatingEmojis: [],
+  // Performance
+  fps: 0,
+  frameCount: 0,
+  lastFpsTime: 0,
+  // Capture
+  lastCapture: null,
+  // Face state
+  lastSmile: false,
+  lastWink: false,
+  lastMouth: false,
+  smileTimer: 0,
+  // Panel states
+  stickerPanelOpen: false,
+  infoPanelOpen: false,
+  // Continuous effects
+  continuousEffect: null,
+  continuousTimer: 0,
+};
+
+// ═══════════════════════════════════════════════════════
+//                  STICKER LIBRARY
+// ═══════════════════════════════════════════════════════
+const STICKERS = {
+  animals: ['🦁','🐯','🐻','🐼','🦊','🐺','🦅','🐉'],
+  funny:   ['🤡','👻','💀','🤖','👽','🎭','🤪','😈'],
+  love:    ['❤️','💕','💖','💗','💝','💘','💞','🌹'],
+  power:   ['⚡','🔥','💥','✨','🌟','👑','⚔️','🛡️'],
+};
+
+// ═══════════════════════════════════════════════════════
+//               BACKGROUND THEMES
+// ═══════════════════════════════════════════════════════
+const BG_THEMES = [
+  { name: 'عادي', fn: null, class: '' },
+  { name: 'كوكب', fn: drawSpaceBg, class: 'bg-space' },
+  { name: 'غابة', fn: drawForestBg, class: 'bg-forest' },
+  { name: 'نار', fn: drawFireBg, class: 'bg-fire-bg' },
+  { name: 'سايبر', fn: drawCyberBg, class: 'bg-cyber' },
+  { name: 'غروب', fn: drawSunsetBg, class: 'bg-sunset' },
+];
+
+// ═══════════════════════════════════════════════════════
+//                   DOM REFERENCES
+// ═══════════════════════════════════════════════════════
+const video = document.getElementById('video');
+const arCanvas = document.getElementById('ar-canvas');
+const particleCanvas = document.getElementById('particle-canvas');
+const bgCanvas = document.getElementById('bg-canvas');
+const arCtx = arCanvas.getContext('2d');
+const particleCtx = particleCanvas.getContext('2d');
+const bgCtx = bgCanvas.getContext('2d');
+
+// ═══════════════════════════════════════════════════════
+//                   INITIALIZATION
+// ═══════════════════════════════════════════════════════
+async function init() {
+  setLoadingStatus('جاري تحميل MediaPipe Hands...');
+  buildStickerPanel();
+  await new Promise(r => setTimeout(r, 300));
+
+  setLoadingStatus('جاري تهيئة النماذج...');
+  await new Promise(r => setTimeout(r, 400));
+
+  setLoadingStatus('طلب صلاحية الكاميرا...');
+  await new Promise(r => setTimeout(r, 200));
+
+  setLoadingStatus('كل شيء جاهز! 🚀');
+  await new Promise(r => setTimeout(r, 500));
+
+  document.getElementById('loading-screen').classList.add('hidden');
+  await requestCamera();
+}
+
+function setLoadingStatus(msg) {
+  document.getElementById('loading-status').textContent = msg;
+}
+
+async function requestCamera() {
+  try {
+    const constraints = {
+      video: {
+        facingMode: state.facingMode,
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+        frameRate: { ideal: 60, max: 60 }
+      },
+      audio: false
+    };
+    if (state.stream) {
+      state.stream.getTracks().forEach(t => t.stop());
+    }
+    state.stream = await navigator.mediaDevices.getUserMedia(constraints);
+    video.srcObject = state.stream;
+    await video.play();
+
+    resizeCanvases();
+    window.addEventListener('resize', resizeCanvases);
+
+    document.getElementById('permission-screen').classList.add('hidden');
+
+    await initMediaPipe();
+    startRenderLoop();
+  } catch(e) {
+    console.error('Camera error:', e);
+    document.getElementById('permission-screen').classList.remove('hidden');
+    showToast('فشل تفعيل الكاميرا: ' + e.message, 'error');
+  }
+}
+
+function resizeCanvases() {
+  const w = window.innerWidth, h = window.innerHeight;
+  arCanvas.width = w; arCanvas.height = h;
+  particleCanvas.width = w; particleCanvas.height = h;
+  bgCanvas.width = w; bgCanvas.height = h;
+}
+
+// ═══════════════════════════════════════════════════════
+//                   MEDIAPIPE SETUP
+// ═══════════════════════════════════════════════════════
+async function initMediaPipe() {
+  // Hands
+  state.handsModel = new Hands({
+    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+  });
+  state.handsModel.setOptions({
+    maxNumHands: 2,
+    modelComplexity: 1,
+    minDetectionConfidence: 0.7,
+    minTrackingConfidence: 0.6
+  });
+  state.handsModel.onResults(onHandResults);
+
+  // Face Mesh
+  state.faceMeshModel = new FaceMesh({
+    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+  });
+  state.faceMeshModel.setOptions({
+    maxNumFaces: 1,
+    refineLandmarks: true,
+    minDetectionConfidence: 0.6,
+    minTrackingConfidence: 0.5
+  });
+  state.faceMeshModel.onResults(onFaceResults);
+
+  // Camera utility
+  state.camera = new Camera(video, {
+    onFrame: async () => {
+      await state.handsModel.send({ image: video });
+      await state.faceMeshModel.send({ image: video });
+    },
+    width: 1280,
+    height: 720
+  });
+  await state.camera.start();
+}
+
+// ═══════════════════════════════════════════════════════
+//                   HAND TRACKING
+// ═══════════════════════════════════════════════════════
+function onHandResults(results) {
+  state.handResults = results;
+  const count = results.multiHandLandmarks ? results.multiHandLandmarks.length : 0;
+  document.getElementById('hand-count').textContent = count;
+
+  const pill = document.getElementById('pill-hand');
+  if (count > 0) {
+    pill.classList.add('active');
+    detectGestures(results);
+  } else {
+    pill.classList.remove('active');
+    hideGestureBadge();
+  }
+}
+
+function onFaceResults(results) {
+  state.faceResults = results;
+  const pill = document.getElementById('pill-face');
+  if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+    pill.classList.add('active');
+    document.getElementById('face-status').textContent = '😊';
+    processFaceGestures(results.multiFaceLandmarks[0]);
+  } else {
+    pill.classList.remove('active');
+    document.getElementById('face-status').textContent = '—';
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+//                GESTURE RECOGNITION
+// ═══════════════════════════════════════════════════════
+function getLandmarks(hand) { return hand; }
+
+function isFingerUp(lms, tip, pip) {
+  return lms[tip].y < lms[pip].y;
+}
+
+function getFingerStates(lms) {
+  return {
+    thumb:  lms[4].x < lms[3].x, // simplified for right hand
+    index:  isFingerUp(lms, 8, 6),
+    middle: isFingerUp(lms, 12, 10),
+    ring:   isFingerUp(lms, 16, 14),
+    pinky:  isFingerUp(lms, 20, 18),
+  };
+}
+
+function detectGestures(results) {
+  if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) return;
+
+  const now = Date.now();
+  let gesture = null;
+
+  // Two hands for clap
+  if (results.multiHandLandmarks.length === 2) {
+    const h1 = results.multiHandLandmarks[0];
+    const h2 = results.multiHandLandmarks[1];
+    const dist = Math.hypot(h1[9].x - h2[9].x, h1[9].y - h2[9].y);
+    if (dist < 0.12) {
+      gesture = 'clap';
+    }
+  }
+
+  if (!gesture) {
+    const lms = results.multiHandLandmarks[0];
+    const f = getFingerStates(lms);
+    const upCount = [f.index, f.middle, f.ring, f.pinky].filter(Boolean).length;
+
+    if (upCount === 0 && !f.thumb) {
+      gesture = 'fist';
+    } else if (upCount === 4 && f.thumb) {
+      gesture = 'open';
+    } else if (upCount === 4 && !f.thumb) {
+      gesture = 'four';
+    } else if (f.index && !f.middle && !f.ring && !f.pinky) {
+      gesture = 'one';
+    } else if (f.index && f.middle && !f.ring && !f.pinky) {
+      gesture = 'peace';
+    } else if (f.index && !f.middle && !f.ring && f.pinky) {
+      gesture = 'rock';
+    } else if (f.index && f.middle && f.ring && f.pinky && !f.thumb) {
+      // Heart gesture approximation
+      gesture = 'four';
+    } else if (!f.index && !f.middle && !f.ring && f.pinky && f.thumb) {
+      gesture = 'love';
+    }
+  }
+
+  if (gesture && (gesture !== state.currentGesture || now - state.lastGestureTime > state.gestureCooldown * 2)) {
+    if (gesture !== state.currentGesture) {
+      state.currentGesture = gesture;
+      state.lastGestureTime = now;
+      triggerGestureEffect(gesture, results);
+      showGestureBadge(gesture);
+    }
+  }
+}
+
+function triggerGestureEffect(gesture, results) {
+  const lms = results.multiHandLandmarks[0];
+  const cx = (1 - lms[9].x) * window.innerWidth;
+  const cy = lms[9].y * window.innerHeight;
+
+  switch(gesture) {
+    case 'one':
+      // One finger → Lion sticker
+      state.activeSticker = '🦁';
+      state.stickerPos = { x: lms[8].x, y: lms[8].y };
+      spawnFloatingEmoji('🦁', cx, cy - 80, 80, 3000);
+      if (state.activeEffect === 'auto') state.continuousEffect = 'stars';
+      break;
+    case 'peace':
+      // ✌️ → Fire effect
+      if (state.activeEffect === 'auto') state.continuousEffect = 'fire';
+      spawnFireBurst(cx, cy);
+      break;
+    case 'fist':
+      // Fist → Explosion
+      triggerExplosion(cx, cy);
+      if (state.activeEffect === 'auto') state.continuousEffect = 'explosion';
+      break;
+    case 'open':
+      // Open hand → Change background
+      cycleBg();
+      if (state.activeEffect === 'auto') state.continuousEffect = 'energy';
+      break;
+    case 'love':
+      // Love → Hearts
+      spawnHearts(cx, cy);
+      if (state.activeEffect === 'auto') state.continuousEffect = 'hearts';
+      break;
+    case 'rock':
+      // Rock 🤘 → Lightning
+      triggerLightning();
+      if (state.activeEffect === 'auto') state.continuousEffect = 'lightning';
+      break;
+    case 'clap':
+      // Clap → Energy burst
+      triggerEnergyBurst();
+      if (state.activeEffect === 'auto') state.continuousEffect = 'energy';
+      break;
+  }
+  state.continuousTimer = Date.now();
+}
+
+// ═══════════════════════════════════════════════════════
+//                FACE GESTURE PROCESSING
+// ═══════════════════════════════════════════════════════
+function processFaceGestures(lms) {
+  if (!lms || lms.length < 468) return;
+
+  // Smile detection (mouth corners vs center)
+  const leftMouth = lms[61];
+  const rightMouth = lms[291];
+  const upperLip = lms[13];
+  const lowerLip = lms[14];
+  const mouthCenter = lms[0];
+
+  const mouthWidth = Math.hypot(rightMouth.x - leftMouth.x, rightMouth.y - leftMouth.y);
+  const mouthOpen = Math.hypot(upperLip.x - lowerLip.x, upperLip.y - lowerLip.y);
+  const smileRatio = (leftMouth.y + rightMouth.y) / 2 - mouthCenter.y;
+
+  const isSmiling = smileRatio < -0.005 && mouthWidth > 0.1;
+  const isMouthOpen = mouthOpen > 0.04;
+
+  // Wink detection
+  const leftEyeTop = lms[159];
+  const leftEyeBot = lms[145];
+  const rightEyeTop = lms[386];
+  const rightEyeBot = lms[374];
+
+  const leftEyeOpen = Math.abs(leftEyeTop.y - leftEyeBot.y);
+  const rightEyeOpen = Math.abs(rightEyeTop.y - rightEyeBot.y);
+
+  const isWinking = (leftEyeOpen < 0.005 && rightEyeOpen > 0.01) ||
+                    (rightEyeOpen < 0.005 && leftEyeOpen > 0.01);
+
+  const now = Date.now();
+
+  if (isSmiling && !state.lastSmile && now - state.smileTimer > 2000) {
+    state.smileTimer = now;
+    const cx = lms[0].x * window.innerWidth;
+    const cy = lms[0].y * window.innerHeight;
+    spawnFloatingEmoji('😄', cx, cy - 60);
+    spawnFloatingEmoji('⭐', cx - 60, cy - 40);
+    spawnFloatingEmoji('✨', cx + 60, cy - 40);
+    showToast('😄 ابتسامة جميلة!', 'success');
+  }
+  state.lastSmile = isSmiling;
+
+  if (isWinking && !state.lastWink) {
+    activateRandomFilter();
+    showToast('😉 غمزة رائعة!', 'success');
+  }
+  state.lastWink = isWinking;
+
+  if (isMouthOpen && !state.lastMouth) {
+    const cx = lms[0].x * window.innerWidth;
+    const cy = lms[0].y * window.innerHeight;
+    spawnFloatingEmoji('😮', cx, cy - 80, 60, 1500);
+    spawnFloatingEmoji('🌟', cx + 40, cy - 50);
+  }
+  state.lastMouth = isMouthOpen;
+}
+
+// ═══════════════════════════════════════════════════════
+//                   PARTICLE SYSTEM
+// ═══════════════════════════════════════════════════════
+class Particle {
+  constructor(x, y, type) {
+    this.x = x; this.y = y;
+    this.type = type;
+    this.vx = (Math.random() - 0.5) * 8;
+    this.vy = (Math.random() - 0.5) * 8 - 3;
+    this.life = 1;
+    this.decay = 0.012 + Math.random() * 0.018;
+    this.size = 3 + Math.random() * 8;
+    this.rotation = Math.random() * Math.PI * 2;
+    this.rotSpeed = (Math.random() - 0.5) * 0.2;
+    this.gravity = 0.15;
+    switch(type) {
+      case 'fire':
+        this.color = `hsl(${20 + Math.random() * 30}, 100%, ${50 + Math.random() * 30}%)`;
+        this.size = 4 + Math.random() * 10;
+        this.vy = -5 - Math.random() * 5;
+        this.vx = (Math.random() - 0.5) * 3;
+        this.gravity = -0.05;
+        this.decay = 0.018 + Math.random() * 0.015;
+        break;
+      case 'lightning':
+        this.color = `hsl(${220 + Math.random() * 60}, 100%, ${70 + Math.random() * 30}%)`;
+        this.size = 2 + Math.random() * 5;
+        this.vx = (Math.random() - 0.5) * 20;
+        this.vy = (Math.random() - 0.5) * 20;
+        this.decay = 0.04 + Math.random() * 0.03;
+        this.gravity = 0;
+        break;
+      case 'heart':
+        this.color = `hsl(${340 + Math.random() * 30}, 100%, ${60 + Math.random() * 20}%)`;
+        this.size = 12 + Math.random() * 16;
+        this.vy = -3 - Math.random() * 3;
+        this.vx = (Math.random() - 0.5) * 2;
+        this.gravity = -0.02;
+        this.decay = 0.008 + Math.random() * 0.01;
+        this.emoji = '❤️';
+        break;
+      case 'star':
+        this.color = `hsl(${40 + Math.random() * 30}, 100%, ${70 + Math.random() * 20}%)`;
+        this.size = 8 + Math.random() * 14;
+        this.emoji = ['⭐','🌟','✨'][Math.floor(Math.random()*3)];
+        this.decay = 0.01 + Math.random() * 0.01;
+        break;
+      case 'explosion':
+        this.color = `hsl(${Math.random() * 60}, 100%, ${50 + Math.random() * 30}%)`;
+        this.size = 6 + Math.random() * 16;
+        this.vx = (Math.random() - 0.5) * 22;
+        this.vy = (Math.random() - 0.5) * 22;
+        this.decay = 0.025 + Math.random() * 0.02;
+        break;
+      case 'energy':
+        this.color = `hsl(${180 + Math.random() * 80}, 100%, ${60 + Math.random() * 30}%)`;
+        this.size = 3 + Math.random() * 8;
+        this.vx = (Math.random() - 0.5) * 12;
+        this.vy = (Math.random() - 0.5) * 12;
+        this.gravity = 0;
+        this.decay = 0.018 + Math.random() * 0.015;
+        break;
+      case 'matrix':
+        this.color = `hsl(120, 100%, ${40 + Math.random() * 40}%)`;
+        this.size = 6 + Math.random() * 8;
+        this.vy = 5 + Math.random() * 10;
+        this.vx = 0;
+        this.decay = 0.015 + Math.random() * 0.01;
+        this.gravity = 0.1;
+        this.char = String.fromCharCode(0x30A0 + Math.random() * 96);
+        break;
+      case 'snow':
+        this.color = 'rgba(200,220,255,0.9)';
+        this.size = 4 + Math.random() * 10;
+        this.vy = 1 + Math.random() * 3;
+        this.vx = (Math.random() - 0.5) * 1.5;
+        this.decay = 0.004 + Math.random() * 0.006;
+        this.gravity = 0.01;
+        break;
+      case 'rainbow':
+        this.color = `hsl(${Math.random() * 360}, 100%, 65%)`;
+        this.size = 5 + Math.random() * 12;
+        this.vx = (Math.random() - 0.5) * 10;
+        this.vy = (Math.random() - 0.5) * 10;
+        this.decay = 0.015;
+        break;
+    }
+  }
+
+  update() {
+    this.x += this.vx;
+    this.y += this.vy;
+    this.vy += this.gravity;
+    this.vx *= 0.98;
+    this.life -= this.decay;
+    this.rotation += this.rotSpeed;
+    this.size *= 0.995;
+  }
+
+  draw(ctx) {
+    if (this.life <= 0) return;
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, this.life);
+    ctx.translate(this.x, this.y);
+    ctx.rotate(this.rotation);
+
+    if (this.emoji) {
+      ctx.font = `${this.size}px serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(this.emoji, 0, 0);
+    } else if (this.char) {
+      ctx.fillStyle = this.color;
+      ctx.font = `bold ${this.size}px monospace`;
+      ctx.textAlign = 'center';
+      ctx.fillText(this.char, 0, 0);
+    } else {
+      ctx.beginPath();
+      if (this.type === 'fire') {
+        ctx.ellipse(0, 0, this.size * 0.5, this.size, 0, 0, Math.PI * 2);
+      } else if (this.type === 'snow') {
+        drawSnowflake(ctx, 0, 0, this.size * 0.5);
+      } else {
+        ctx.arc(0, 0, this.size * 0.5, 0, Math.PI * 2);
+      }
+      ctx.fillStyle = this.color;
+      ctx.shadowColor = this.color;
+      ctx.shadowBlur = this.size;
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+}
+
+function drawSnowflake(ctx, x, y, r) {
+  for (let i = 0; i < 6; i++) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate((i * Math.PI) / 3);
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(0, -r);
+    ctx.strokeStyle = 'rgba(200,220,255,0.9)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+class FloatingEmoji {
+  constructor(emoji, x, y, size = 48, duration = 2000) {
+    this.emoji = emoji;
+    this.x = x; this.y = y;
+    this.size = size;
+    this.vy = -1.5;
+    this.life = 1;
+    this.decay = 1 / (duration / 16.67);
+    this.scale = 0;
+    this.targetScale = 1;
+  }
+  update() {
+    this.y += this.vy;
+    this.life -= this.decay;
+    this.scale = Math.min(this.targetScale, this.scale + 0.1);
+    this.vy *= 0.99;
+  }
+  draw(ctx) {
+    if (this.life <= 0) return;
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, this.life);
+    ctx.font = `${this.size * this.scale}px serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(this.emoji, this.x, this.y);
+    ctx.restore();
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+//                  EFFECT TRIGGERS
+// ═══════════════════════════════════════════════════════
+function spawnParticles(x, y, type, count = 20) {
+  for (let i = 0; i < count; i++) {
+    if (state.particles.length < 800) {
+      state.particles.push(new Particle(x, y, type));
+    }
+  }
+}
+
+function spawnFireBurst(x, y) {
+  for (let i = 0; i < 40; i++) {
+    const px = x + (Math.random() - 0.5) * 60;
+    const py = y + Math.random() * 20;
+    if (state.particles.length < 800) state.particles.push(new Particle(px, py, 'fire'));
+  }
+}
+
+function triggerExplosion(x, y) {
+  spawnParticles(x, y, 'explosion', 80);
+  spawnFloatingEmoji('💥', x, y, 80, 1000);
+  for (let i = 0; i < 5; i++) {
+    const angle = (i / 5) * Math.PI * 2;
+    const dx = Math.cos(angle) * 60;
+    const dy = Math.sin(angle) * 60;
+    setTimeout(() => {
+      spawnParticles(x + dx, y + dy, 'fire', 15);
+    }, i * 100);
+  }
+}
+
+function spawnHearts(x, y) {
+  for (let i = 0; i < 20; i++) {
+    setTimeout(() => {
+      const px = x + (Math.random() - 0.5) * 100;
+      const py = y + (Math.random() - 0.5) * 60;
+      if (state.particles.length < 800) state.particles.push(new Particle(px, py, 'heart'));
+    }, i * 50);
+  }
+}
+
+function triggerLightning() {
+  state.lightningActive = true;
+  state.lightningTimer = Date.now();
+  spawnParticles(window.innerWidth * 0.5, window.innerHeight * 0.3, 'lightning', 60);
+  showToast('⚡ برق!', 'success');
+}
+
+function triggerEnergyBurst() {
+  const cx = window.innerWidth / 2;
+  const cy = window.innerHeight / 2;
+  for (let ring = 0; ring < 3; ring++) {
+    setTimeout(() => {
+      spawnParticles(cx, cy, 'energy', 40);
+    }, ring * 150);
+  }
+  spawnFloatingEmoji('✨', cx, cy, 100, 1000);
+  showToast('✨ طاقة!', 'success');
+}
+
+function spawnFloatingEmoji(emoji, x, y, size = 48, duration = 2000) {
+  state.floatingEmojis.push(new FloatingEmoji(emoji, x, y, size, duration));
+}
+
+// ═══════════════════════════════════════════════════════
+//              CONTINUOUS EFFECTS (per frame)
+// ═══════════════════════════════════════════════════════
+function spawnContinuousParticles() {
+  const effect = state.manualEffect || (state.activeEffect !== 'auto' ? state.activeEffect : state.continuousEffect);
+  if (!effect) return;
+
+  // Auto expire continuous effect after 4s of inactivity
+  if (state.continuousEffect && Date.now() - state.continuousTimer > 4000) {
+    state.continuousEffect = null;
+    return;
+  }
+
+  const w = window.innerWidth, h = window.innerHeight;
+
+  switch(effect) {
+    case 'fire':
+      for (let i = 0; i < 3; i++) {
+        const x = Math.random() * w;
+        const y = h - Math.random() * 40;
+        spawnParticles(x, y, 'fire', 2);
+      }
+      break;
+    case 'hearts':
+      if (Math.random() < 0.4) spawnParticles(Math.random() * w, h, 'heart', 2);
+      break;
+    case 'stars':
+      if (Math.random() < 0.4) spawnParticles(Math.random() * w, Math.random() * h, 'star', 1);
+      break;
+    case 'lightning':
+      if (Math.random() < 0.15) spawnParticles(Math.random() * w, Math.random() * h * 0.5, 'lightning', 10);
+      break;
+    case 'explosion':
+      if (Math.random() < 0.1) {
+        const x = Math.random() * w;
+        const y = Math.random() * h;
+        spawnParticles(x, y, 'explosion', 8);
+      }
+      break;
+    case 'energy':
+      if (Math.random() < 0.5) spawnParticles(Math.random() * w, Math.random() * h, 'energy', 3);
+      break;
+    case 'matrix':
+      for (let i = 0; i < 2; i++) spawnParticles(Math.random() * w, 0, 'matrix', 1);
+      break;
+    case 'snow':
+      for (let i = 0; i < 3; i++) spawnParticles(Math.random() * w, 0, 'snow', 1);
+      break;
+    case 'rainbow':
+      if (Math.random() < 0.5) spawnParticles(Math.random() * w, Math.random() * h, 'rainbow', 2);
+      break;
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+//             BACKGROUND GENERATORS
+// ═══════════════════════════════════════════════════════
+let bgTime = 0;
+function drawBgFrame() {
+  const theme = BG_THEMES[state.bgIndex];
+  if (!theme.fn) {
+    bgCanvas.classList.remove('active');
+    return;
+  }
+  bgCanvas.classList.add('active');
+  bgTime += 0.02;
+  theme.fn(bgCtx, bgCanvas.width, bgCanvas.height, bgTime);
+}
+
+function drawSpaceBg(ctx, w, h, t) {
+  ctx.fillStyle = `rgba(0,0,16,0.15)`;
+  ctx.fillRect(0, 0, w, h);
+  for (let i = 0; i < 3; i++) {
+    const x = (Math.sin(t * 0.3 + i * 2.1) * 0.5 + 0.5) * w;
+    const y = (Math.cos(t * 0.2 + i * 1.7) * 0.5 + 0.5) * h;
+    const r = 40 + Math.sin(t + i) * 20;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, `hsla(${220 + i * 40},100%,70%,0.15)`);
+    g.addColorStop(1, 'transparent');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, w, h);
+  }
+}
+
+function drawForestBg(ctx, w, h, t) {
+  ctx.fillStyle = 'rgba(0,20,0,0.12)';
+  ctx.fillRect(0, 0, w, h);
+  for (let i = 0; i < 5; i++) {
+    const x = (i / 5 + Math.sin(t * 0.2 + i) * 0.05) * w;
+    ctx.fillStyle = `rgba(0,${50 + i * 10},0,0.3)`;
+    ctx.beginPath();
+    ctx.moveTo(x, h);
+    ctx.lineTo(x - 30, h * 0.4);
+    ctx.lineTo(x + 30, h * 0.4);
+    ctx.fill();
+  }
+}
+
+function drawFireBg(ctx, w, h, t) {
+  ctx.fillStyle = 'rgba(20,0,0,0.1)';
+  ctx.fillRect(0, 0, w, h);
+  for (let i = 0; i < 5; i++) {
+    const x = ((i / 5 + Math.sin(t + i) * 0.1) % 1) * w;
+    const g = ctx.createRadialGradient(x, h, 0, x, h, h * 0.5);
+    g.addColorStop(0, `hsla(${15 + i * 5},100%,50%,0.3)`);
+    g.addColorStop(0.5, `hsla(30,100%,40%,0.1)`);
+    g.addColorStop(1, 'transparent');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, w, h);
+  }
+}
+
+function drawCyberBg(ctx, w, h, t) {
+  ctx.fillStyle = 'rgba(0,0,20,0.15)';
+  ctx.fillRect(0, 0, w, h);
+  ctx.strokeStyle = `rgba(0,255,200,0.08)`;
+  ctx.lineWidth = 1;
+  const spacing = 40;
+  for (let x = 0; x < w; x += spacing) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+  }
+  for (let y = 0; y < h; y += spacing) {
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+  }
+}
+
+function drawSunsetBg(ctx, w, h, t) {
+  const g = ctx.createLinearGradient(0, 0, 0, h);
+  g.addColorStop(0, `hsla(${280 + Math.sin(t * 0.1) * 20},80%,20%,0.4)`);
+  g.addColorStop(0.5, `hsla(${20},100%,40%,0.2)`);
+  g.addColorStop(1, `hsla(${340},100%,20%,0.3)`);
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, w, h);
+}
+
+// ═══════════════════════════════════════════════════════
+//              AR CANVAS DRAWING
+// ═══════════════════════════════════════════════════════
+function drawAR() {
+  arCtx.clearRect(0, 0, arCanvas.width, arCanvas.height);
+
+  // Draw hand landmarks
+  if (state.handResults && state.handResults.multiHandLandmarks) {
+    for (const lms of state.handResults.multiHandLandmarks) {
+      drawHandSkeleton(lms);
+    }
+  }
+
+  // Draw face mesh (minimal)
+  if (state.faceResults && state.faceResults.multiFaceLandmarks) {
+    for (const lms of state.faceResults.multiFaceLandmarks) {
+      drawFaceOutline(lms);
+    }
+  }
+
+  // Draw active sticker near hand
+  if (state.activeSticker && state.handResults && state.handResults.multiHandLandmarks && state.handResults.multiHandLandmarks.length > 0) {
+    const lms = state.handResults.multiHandLandmarks[0];
+    const x = (1 - lms[8].x) * arCanvas.width;
+    const y = lms[8].y * arCanvas.height;
+    arCtx.font = '52px serif';
+    arCtx.textAlign = 'center';
+    arCtx.textBaseline = 'middle';
+    arCtx.shadowColor = 'rgba(255,200,0,0.8)';
+    arCtx.shadowBlur = 20;
+    arCtx.fillText(state.activeSticker, x, y - 70);
+    arCtx.shadowBlur = 0;
+  }
+
+  // Draw lightning bolts
+  if (state.lightningActive && Date.now() - state.lightningTimer < 600) {
+    drawLightningEffect();
+  } else {
+    state.lightningActive = false;
+  }
+
+  // Draw grid overlay
+  if (state.showGrid) {
+    drawGrid();
+  }
+}
+
+function drawHandSkeleton(lms) {
+  const w = arCanvas.width, h = arCanvas.height;
+  const connections = [
+    [0,1],[1,2],[2,3],[3,4],
+    [0,5],[5,6],[6,7],[7,8],
+    [0,9],[9,10],[10,11],[11,12],
+    [0,13],[13,14],[14,15],[15,16],
+    [0,17],[17,18],[18,19],[19,20],
+    [5,9],[9,13],[13,17]
+  ];
+
+  arCtx.strokeStyle = 'rgba(124,58,237,0.6)';
+  arCtx.lineWidth = 2;
+  arCtx.shadowColor = 'rgba(124,58,237,0.8)';
+  arCtx.shadowBlur = 6;
+
+  for (const [a, b] of connections) {
+    arCtx.beginPath();
+    arCtx.moveTo((1 - lms[a].x) * w, lms[a].y * h);
+    arCtx.lineTo((1 - lms[b].x) * w, lms[b].y * h);
+    arCtx.stroke();
+  }
+
+  // Finger tips
+  const tips = [4, 8, 12, 16, 20];
+  for (const tip of tips) {
+    const x = (1 - lms[tip].x) * w;
+    const y = lms[tip].y * h;
+    const grad = arCtx.createRadialGradient(x, y, 0, x, y, 8);
+    grad.addColorStop(0, 'rgba(255,255,255,0.9)');
+    grad.addColorStop(1, 'rgba(124,58,237,0)');
+    arCtx.fillStyle = grad;
+    arCtx.beginPath();
+    arCtx.arc(x, y, 8, 0, Math.PI * 2);
+    arCtx.fill();
+  }
+  arCtx.shadowBlur = 0;
+}
+
+function drawFaceOutline(lms) {
+  if (!lms || lms.length < 10) return;
+  const w = arCanvas.width, h = arCanvas.height;
+  // Draw just a few key points subtly
+  const keyPoints = [234, 454, 10, 152, 263, 33];
+  for (const idx of keyPoints) {
+    if (!lms[idx]) continue;
+    const x = (1 - lms[idx].x) * w;
+    const y = lms[idx].y * h;
+    arCtx.beginPath();
+    arCtx.arc(x, y, 2, 0, Math.PI * 2);
+    arCtx.fillStyle = 'rgba(6,182,212,0.5)';
+    arCtx.fill();
+  }
+}
+
+function drawLightningEffect() {
+  const w = arCanvas.width, h = arCanvas.height;
+  arCtx.save();
+  arCtx.strokeStyle = 'rgba(150,180,255,0.9)';
+  arCtx.lineWidth = 2;
+  arCtx.shadowColor = 'rgba(100,150,255,1)';
+  arCtx.shadowBlur = 20;
+
+  for (let i = 0; i < 4; i++) {
+    const startX = Math.random() * w;
+    const startY = 0;
+    drawLightningBolt(startX, startY, startX + (Math.random()-0.5)*200, h * 0.7);
+  }
+  arCtx.restore();
+}
+
+function drawLightningBolt(x1, y1, x2, y2, detail = 5) {
+  if (detail === 0) {
+    arCtx.beginPath();
+    arCtx.moveTo(x1, y1);
+    arCtx.lineTo(x2, y2);
+    arCtx.stroke();
+    return;
+  }
+  const mx = (x1 + x2) / 2 + (Math.random() - 0.5) * 60;
+  const my = (y1 + y2) / 2 + (Math.random() - 0.5) * 30;
+  drawLightningBolt(x1, y1, mx, my, detail - 1);
+  drawLightningBolt(mx, my, x2, y2, detail - 1);
+  if (Math.random() < 0.3) {
+    drawLightningBolt(mx, my, mx + (Math.random()-0.5)*100, my + Math.random()*100, detail - 2);
+  }
+}
+
+function drawGrid() {
+  const w = arCanvas.width, h = arCanvas.height;
+  arCtx.strokeStyle = 'rgba(255,255,255,0.12)';
+  arCtx.lineWidth = 1;
+  const cols = 3, rows = 3;
+  for (let i = 1; i < cols; i++) {
+    arCtx.beginPath();
+    arCtx.moveTo(w * i / cols, 0);
+    arCtx.lineTo(w * i / cols, h);
+    arCtx.stroke();
+  }
+  for (let i = 1; i < rows; i++) {
+    arCtx.beginPath();
+    arCtx.moveTo(0, h * i / rows);
+    arCtx.lineTo(w, h * i / rows);
+    arCtx.stroke();
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+//              PARTICLE CANVAS DRAWING
+// ═══════════════════════════════════════════════════════
+function drawParticles() {
+  particleCtx.clearRect(0, 0, particleCanvas.width, particleCanvas.height);
+
+  state.particles = state.particles.filter(p => p.life > 0);
+  state.floatingEmojis = state.floatingEmojis.filter(e => e.life > 0);
+
+  for (const p of state.particles) {
+    p.update();
+    p.draw(particleCtx);
+  }
+  for (const e of state.floatingEmojis) {
+    e.update();
+    e.draw(particleCtx);
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+//                   RENDER LOOP
+// ═══════════════════════════════════════════════════════
+let lastFrameTime = 0;
+function startRenderLoop() {
+  function loop(ts) {
+    requestAnimationFrame(loop);
+    updateFPS(ts);
+    spawnContinuousParticles();
+    drawBgFrame();
+    drawParticles();
+    drawAR();
+  }
+  requestAnimationFrame(loop);
+}
+
+function updateFPS(ts) {
+  state.frameCount++;
+  if (ts - state.lastFpsTime > 500) {
+    state.fps = Math.round(state.frameCount * 1000 / (ts - state.lastFpsTime));
+    state.frameCount = 0;
+    state.lastFpsTime = ts;
+    const el = document.getElementById('fps-val');
+    el.textContent = state.fps;
+    el.className = state.fps >= 50 ? 'val' : state.fps >= 30 ? 'val warn' : 'val bad';
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+//                   UI FUNCTIONS
+// ═══════════════════════════════════════════════════════
+function showGestureBadge(gesture) {
+  const map = {
+    one:   { icon: '☝️', name: 'أسد ظهر!' },
+    peace: { icon: '✌️', name: 'نار حولك!' },
+    fist:  { icon: '✊', name: 'انفجار!' },
+    open:  { icon: '🖐️', name: 'خلفية جديدة!' },
+    love:  { icon: '🤟', name: 'قلوب!' },
+    rock:  { icon: '🤘', name: 'برق!' },
+    clap:  { icon: '👏', name: 'طاقة!' },
+    four:  { icon: '🖖', name: 'نجوم!' },
+  };
+  const info = map[gesture] || { icon: '👋', name: gesture };
+  const badge = document.getElementById('gesture-badge');
+  document.getElementById('gesture-icon').textContent = info.icon;
+  document.getElementById('gesture-name').textContent = info.name;
+  badge.classList.remove('hidden');
+  clearTimeout(badge._timer);
+  badge._timer = setTimeout(() => {
+    badge.classList.add('hidden');
+    state.currentGesture = null;
+  }, 2500);
+}
+
+function hideGestureBadge() {
+  // Delayed hide
+  const badge = document.getElementById('gesture-badge');
+  clearTimeout(badge._hideTimer);
+  badge._hideTimer = setTimeout(() => {
+    if (!state.handResults?.multiHandLandmarks?.length) {
+      badge.classList.add('hidden');
+    }
+  }, 1200);
+}
+
+function showToast(msg, type = 'default') {
+  const ct = document.getElementById('toast-container');
+  const t = document.createElement('div');
+  t.className = `toast ${type}`;
+  t.textContent = msg;
+  ct.appendChild(t);
+  setTimeout(() => {
+    t.style.opacity = '0';
+    t.style.transition = 'opacity 0.4s ease';
+    setTimeout(() => t.remove(), 400);
+  }, 2500);
+}
+
+function setEffect(effect, btn) {
+  document.querySelectorAll('.effect-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  state.activeEffect = effect;
+  state.manualEffect = (effect !== 'auto') ? effect : null;
+  if (effect !== 'auto') {
+    state.continuousEffect = null;
+    showToast(`تأثير: ${btn.textContent.trim()}`, 'success');
+  }
+}
+
+function toggleStickers() {
+  state.stickerPanelOpen = !state.stickerPanelOpen;
+  document.getElementById('sticker-panel').classList.toggle('open', state.stickerPanelOpen);
+  document.getElementById('btn-stickers').classList.toggle('active', state.stickerPanelOpen);
+}
+
+function toggleInfo() {
+  state.infoPanelOpen = !state.infoPanelOpen;
+  document.getElementById('info-panel').classList.toggle('open', state.infoPanelOpen);
+}
+
+function toggleMirror() {
+  state.isMirrored = !state.isMirrored;
+  video.style.transform = state.isMirrored ? 'scaleX(-1)' : 'scaleX(1)';
+  document.getElementById('side-mirror-btn').classList.toggle('active', state.isMirrored);
+}
+
+function toggleGrid() {
+  state.showGrid = !state.showGrid;
+  document.getElementById('side-grid-btn').classList.toggle('active', state.showGrid);
+}
+
+function cycleBg() {
+  state.bgIndex = (state.bgIndex + 1) % BG_THEMES.length;
+  const oldClass = document.body.className.split(' ').find(c => c.startsWith('bg-'));
+  if (oldClass) document.body.classList.remove(oldClass);
+  const theme = BG_THEMES[state.bgIndex];
+  if (theme.class) document.body.classList.add(theme.class);
+  showToast(`🖼️ خلفية: ${theme.name}`, 'success');
+}
+
+async function switchCamera() {
+  state.facingMode = state.facingMode === 'user' ? 'environment' : 'user';
+  const btn = document.getElementById('btn-switch');
+  btn.style.transform = 'rotate(180deg)';
+  setTimeout(() => btn.style.transform = '', 400);
+  if (state.camera) {
+    await state.camera.stop();
+  }
+  await requestCamera();
+}
+
+function activateRandomFilter() {
+  const filters = ['fire', 'lightning', 'hearts', 'stars', 'energy', 'rainbow'];
+  const f = filters[Math.floor(Math.random() * filters.length)];
+  state.continuousEffect = f;
+  state.continuousTimer = Date.now();
+  showToast(`✨ فلتر عشوائي: ${f}`, 'success');
+}
+
+// ═══════════════════════════════════════════════════════
+//              CAPTURE & SHARE
+// ═══════════════════════════════════════════════════════
+function capturePhoto() {
+  const btn = document.getElementById('btn-capture');
+  btn.classList.add('flash');
+  setTimeout(() => btn.classList.remove('flash'), 400);
+
+  // Flash
+  const flash = document.getElementById('flash-overlay');
+  flash.classList.add('flash');
+  setTimeout(() => flash.classList.remove('flash'), 500);
+
+  // Compose final image
+  const output = document.createElement('canvas');
+  output.width = window.innerWidth;
+  output.height = window.innerHeight;
+  const ctx = output.getContext('2d');
+
+  // 1. Background
+  if (BG_THEMES[state.bgIndex].fn) {
+    ctx.drawImage(bgCanvas, 0, 0);
+  }
+
+  // 2. Video frame
+  ctx.save();
+  if (state.isMirrored) {
+    ctx.translate(output.width, 0);
+    ctx.scale(-1, 1);
+  }
+  ctx.drawImage(video, 0, 0, output.width, output.height);
+  ctx.restore();
+
+  // 3. Particle effects
+  ctx.drawImage(particleCanvas, 0, 0);
+  // 4. AR overlay
+  ctx.drawImage(arCanvas, 0, 0);
+
+  // Watermark
+  ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  ctx.font = 'bold 14px Inter, sans-serif';
+  ctx.textAlign = 'right';
+  ctx.fillText('AR Gesture Studio • Ahmed Sallam', output.width - 16, output.height - 16);
+
+  output.toBlob(blob => {
+    if (!blob) { showToast('فشل التصوير', 'error'); return; }
+    state.lastCapture = blob;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `ar-capture-${Date.now()}.png`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('📸 تم الحفظ!', 'success');
+
+    // Big emoji pop
+    spawnFloatingEmoji('📸', window.innerWidth / 2, window.innerHeight / 2, 80, 1500);
+  }, 'image/png');
+}
+
+async function shareLastCapture() {
+  if (!state.lastCapture) {
+    showToast('التقط صورة أولاً!', 'error');
+    return;
+  }
+  if (navigator.share) {
+    try {
+      const file = new File([state.lastCapture], 'ar-capture.png', { type: 'image/png' });
+      await navigator.share({
+        title: 'AR Gesture Studio',
+        text: 'صورتي من AR Gesture Studio بواسطة Ahmed Sallam',
+        files: [file]
+      });
+      showToast('✅ تمت المشاركة!', 'success');
+    } catch(e) {
+      if (e.name !== 'AbortError') showToast('فشل المشاركة', 'error');
+    }
+  } else {
+    // Fallback: download
+    capturePhoto();
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+//             STICKER PANEL BUILDER
+// ═══════════════════════════════════════════════════════
+function buildStickerPanel() {
+  const cats = {
+    animals: { id: 'stickers-animals', items: STICKERS.animals },
+    funny:   { id: 'stickers-funny',   items: STICKERS.funny },
+    love:    { id: 'stickers-love',    items: STICKERS.love },
+    power:   { id: 'stickers-power',   items: STICKERS.power },
+  };
+  for (const [cat, data] of Object.entries(cats)) {
+    const grid = document.getElementById(data.id);
+    if (!grid) continue;
+    for (const emoji of data.items) {
+      const btn = document.createElement('div');
+      btn.className = 'sticker-item';
+      btn.textContent = emoji;
+      btn.onclick = () => selectSticker(emoji, btn);
+      grid.appendChild(btn);
+    }
+  }
+}
+
+function selectSticker(emoji, btn) {
+  document.querySelectorAll('.sticker-item').forEach(b => b.classList.remove('selected'));
+  if (state.activeSticker === emoji) {
+    state.activeSticker = null;
+  } else {
+    btn.classList.add('selected');
+    state.activeSticker = emoji;
+    showToast(`ملصق: ${emoji}`, 'success');
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+//              KEYBOARD SHORTCUTS
+// ═══════════════════════════════════════════════════════
+document.addEventListener('keydown', e => {
+  switch(e.key) {
+    case ' ': capturePhoto(); break;
+    case 'c': switchCamera(); break;
+    case 'b': cycleBg(); break;
+    case 'g': toggleGrid(); break;
+    case 'i': toggleInfo(); break;
+    case 's': toggleStickers(); break;
+    case 'Escape':
+      state.stickerPanelOpen = false;
+      state.infoPanelOpen = false;
+      document.getElementById('sticker-panel').classList.remove('open');
+      document.getElementById('info-panel').classList.remove('open');
+      break;
+  }
+});
+
+// ═══════════════════════════════════════════════════════
+//                   START
+// ═══════════════════════════════════════════════════════
+window.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>
